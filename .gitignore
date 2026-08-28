@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Generated telemetry: the full run is large, only the sample is committed
+data/*.jsonl
+!data/sample_telemetry.jsonl
+
+# dbt
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+dbt/profiles.yml
+
+# Credentials
+*.json.key
+service-account*.json
+.env
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store

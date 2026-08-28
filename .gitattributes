@@ -1,0 +1,13 @@
+# Normalize to LF in the repo and on checkout, on every platform.
+# Overrides the Windows installer default of core.autocrlf=true.
+* text=auto eol=lf
+
+# Load-bearing: the committed fixture must stay byte-identical to what
+# simulator/generate_telemetry.py writes (it opens with newline="\n"),
+# and BigQuery's NEWLINE_DELIMITED_JSON loader expects bare LF.
+*.jsonl text eol=lf
+
+# Never let text rules touch binary assets (future Grafana/docs images).
+*.png binary
+*.jpg binary
+*.pdf binary

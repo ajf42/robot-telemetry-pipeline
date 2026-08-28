@@ -1,0 +1,28 @@
+[project]
+name = "robot-telemetry-pipeline"
+version = "0.1.0"
+description = "Synthetic robot fleet telemetry, validated and loaded to BigQuery, modeled with dbt."
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.7",
+    "google-cloud-bigquery>=3.25",
+    "tzdata>=2024.1; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+dev = ["ruff>=0.5", "mypy>=1.10"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["ingest", "simulator"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
