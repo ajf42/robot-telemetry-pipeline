@@ -11,6 +11,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["ruff>=0.5", "mypy>=1.10"]
+# Only the dbt stage needs these. Kept out of the core dependencies so the
+# simulator and ingest CLIs install without pulling a warehouse toolchain.
+# The Dockerfile pins the same range; change both together.
+dbt = ["dbt-core>=1.9,<1.10", "dbt-bigquery>=1.9,<1.10"]
 
 [build-system]
 requires = ["setuptools>=68"]
