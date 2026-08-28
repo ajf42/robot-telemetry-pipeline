@@ -1,0 +1,26 @@
+# Keep the build context small and free of anything credential-shaped.
+.git/
+.github/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Generated telemetry: the pipeline regenerates this inside the cluster.
+data/
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+
+# Never bake credentials into a layer.
+dbt/profiles.yml
+service-account*.json
+*.json.key
+.env
+
+docs/
+dashboards/

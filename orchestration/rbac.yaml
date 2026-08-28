@@ -1,1 +1,47 @@
-# Argo service account + role bindings (Prompt 4)
+# Minimal RBAC for the telemetry-pipeline workflow in namespace argo.
+#
+# This is the identity the *workflow pods* run as, not the Argo controller --
+# the controller keeps the permissions the quick-start install gave it. Every
+# pod in this DAG only ever does two things against the Kubernetes API:
+# report its own step result, and read its own logs. So that is all it gets.
+#
+#   kubectl apply -n argo -f orchestration/rbac.yaml
+#
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: telemetry-pipeline
+  namespace: argo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: telemetry-pipeline
+  namespace: argo
+rules:
+  # Argo 3.4+ has each step pod write its own outcome back as a
+  # WorkflowTaskResult. Without create+patch here, steps run but report
+  # themselves as errored.
+  - apiGroups: ["argoproj.io"]
+    resources: ["workflowtaskresults"]
+    verbs: ["create", "patch"]
+
+  # Lets the executor read back container logs for step output. Read-only,
+  # and scoped to this namespace by the Role.
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: telemetry-pipeline
+  namespace: argo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: telemetry-pipeline
+subjects:
+  - kind: ServiceAccount
+    name: telemetry-pipeline
+    namespace: argo

@@ -1,1 +1,242 @@
-# Argo Workflow template (Prompt 4)
+# Argo WorkflowTemplate: the four pipeline stages, wired end to end.
+#
+#   generate -> validate -> load -> dbt-build
+#
+# Strictly sequential: each step's output file is the next step's input, so the
+# DAG is a straight line rather than a fan-out. Data moves between steps on a
+# per-run PersistentVolumeClaim mounted at /data in every pod -- no artifact
+# repository, no object storage, nothing to configure before the first run.
+#
+# Submit with:
+#   argo submit -n argo --from workflowtemplate/telemetry-pipeline --watch
+#
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: telemetry-pipeline
+  namespace: argo
+spec:
+  entrypoint: pipeline
+  serviceAccountName: telemetry-pipeline
+
+  # Defaults mirror the data contract: a 15-robot fleet, three weeks of
+  # history, ~3% of rows carrying an injected defect.
+  arguments:
+    parameters:
+      - name: defect-rate
+        value: "0.03"
+      - name: days
+        value: "21"
+      # Optional. Left empty, the steps that talk to GCP read project_id out of
+      # the mounted service-account key, so the usual submit needs no -p at all.
+      - name: gcp-project
+        value: ""
+
+  # One PVC per workflow run, created on submit and garbage-collected with the
+  # workflow. 2Gi comfortably holds 21 days of a 15-robot fleet plus the
+  # clean/rejected split.
+  volumeClaimTemplates:
+    - metadata:
+        name: telemetry-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi
+
+  # Service-account JSON, mounted read-only into the two steps that talk to GCP.
+  volumes:
+    - name: gcp-sa-key
+      secret:
+        secretName: gcp-sa-key
+        defaultMode: 0400
+
+  templates:
+    # ---------------------------------------------------------------------
+    # The DAG. Each edge is a real data dependency, not just ordering.
+    # ---------------------------------------------------------------------
+    - name: pipeline
+      dag:
+        tasks:
+          - name: generate
+            template: generate
+            arguments:
+              parameters:
+                - name: defect-rate
+                  value: "{{workflow.parameters.defect-rate}}"
+                - name: days
+                  value: "{{workflow.parameters.days}}"
+
+          - name: validate
+            template: validate
+            dependencies: [generate]
+
+          - name: load
+            template: load
+            dependencies: [validate]
+            arguments:
+              parameters:
+                - name: gcp-project
+                  value: "{{workflow.parameters.gcp-project}}"
+
+          - name: dbt-build
+            template: dbt-build
+            dependencies: [load]
+            arguments:
+              parameters:
+                - name: gcp-project
+                  value: "{{workflow.parameters.gcp-project}}"
+
+    # ---------------------------------------------------------------------
+    # 1. generate -- synthetic telemetry, defects and all, to /data/telemetry.jsonl
+    # ---------------------------------------------------------------------
+    - name: generate
+      inputs:
+        parameters:
+          - name: defect-rate
+          - name: days
+      container:
+        image: robot-telemetry-pipeline:local
+        imagePullPolicy: Never
+        workingDir: /app
+        command: [python]
+        args:
+          - simulator/generate_telemetry.py
+          - --robots
+          - "15"
+          - --days
+          - "{{inputs.parameters.days}}"
+          - --defect-rate
+          - "{{inputs.parameters.defect-rate}}"
+          - --seed
+          - "42"
+          - --out
+          - /data/telemetry.jsonl
+        volumeMounts:
+          - name: telemetry-data
+            mountPath: /data
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+
+    # ---------------------------------------------------------------------
+    # 2. validate -- split the raw feed into clean.jsonl and rejected.jsonl.
+    #    Exits non-zero if the rejection rate exceeds --max-reject-rate, which
+    #    stops a degraded feed before it reaches BigQuery. No retry here: a feed
+    #    bad enough to fail this check will fail it again on a second attempt.
+    # ---------------------------------------------------------------------
+    - name: validate
+      container:
+        image: robot-telemetry-pipeline:local
+        imagePullPolicy: Never
+        workingDir: /app
+        command: [python]
+        args:
+          - ingest/validate.py
+          - /data/telemetry.jsonl
+          - --out
+          - /data
+          - --max-reject-rate
+          - "0.10"
+        volumeMounts:
+          - name: telemetry-data
+            mountPath: /data
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+
+    # ---------------------------------------------------------------------
+    # 3. load -- clean.jsonl into robot_telemetry.telemetry_raw.
+    #    Retried twice: this is the first step that leaves the cluster, so it is
+    #    the first that can fail on a transient network or BigQuery hiccup.
+    #    --replace keeps the step idempotent, so a retry after a half-finished
+    #    load cannot double-count rows.
+    # ---------------------------------------------------------------------
+    - name: load
+      inputs:
+        parameters:
+          - name: gcp-project
+      retryStrategy:
+        limit: "2"
+        retryPolicy: OnFailure
+        backoff:
+          duration: "30s"
+          factor: "2"
+      container:
+        image: robot-telemetry-pipeline:local
+        imagePullPolicy: Never
+        workingDir: /app
+        command: [sh, -c]
+        args:
+          - |
+            set -eu
+            project="{{inputs.parameters.gcp-project}}"
+            if [ -z "$project" ]; then
+              project=$(python -c "import json, os; print(json.load(open(os.environ['GOOGLE_APPLICATION_CREDENTIALS']))['project_id'])")
+            fi
+            echo "loading into project ${project}"
+            exec python ingest/load_bigquery.py \
+              --source /data/clean.jsonl \
+              --project "$project" \
+              --dataset robot_telemetry \
+              --table telemetry_raw \
+              --replace
+        env:
+          - name: GOOGLE_APPLICATION_CREDENTIALS
+            value: /secrets/gcp/key.json
+        volumeMounts:
+          - name: telemetry-data
+            mountPath: /data
+          - name: gcp-sa-key
+            mountPath: /secrets/gcp
+            readOnly: true
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+
+    # ---------------------------------------------------------------------
+    # 4. dbt-build -- stg_telemetry -> int_robot_daily -> fct_fleet_health,
+    #    plus every schema test, in one pass. Retried twice for the same reason
+    #    as load. dbt_utils is already vendored into the image, so no dbt deps.
+    # ---------------------------------------------------------------------
+    - name: dbt-build
+      inputs:
+        parameters:
+          - name: gcp-project
+      retryStrategy:
+        limit: "2"
+        retryPolicy: OnFailure
+        backoff:
+          duration: "30s"
+          factor: "2"
+      container:
+        image: robot-telemetry-pipeline:local
+        imagePullPolicy: Never
+        workingDir: /app/dbt
+        command: [sh, -c]
+        args:
+          - |
+            set -eu
+            project="{{inputs.parameters.gcp-project}}"
+            if [ -z "$project" ]; then
+              project=$(python -c "import json, os; print(json.load(open(os.environ['GOOGLE_APPLICATION_CREDENTIALS']))['project_id'])")
+            fi
+            export DBT_GCP_PROJECT="$project"
+            echo "building models in project ${project}"
+            exec dbt build --target prod
+        env:
+          - name: GOOGLE_APPLICATION_CREDENTIALS
+            value: /secrets/gcp/key.json
+        volumeMounts:
+          - name: telemetry-data
+            mountPath: /data
+          - name: gcp-sa-key
+            mountPath: /secrets/gcp
+            readOnly: true
+        resources:
+          requests:
+            cpu: 300m
+            memory: 512Mi

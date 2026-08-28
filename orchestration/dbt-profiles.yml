@@ -1,0 +1,27 @@
+# Container-side dbt profile. Baked into the image at /root/.dbt/profiles.yml
+# (see Dockerfile); the repo's dbt/profiles.yml.example stays the template for
+# running dbt by hand on a laptop.
+#
+# Everything environment-specific is read from the environment, so the image
+# holds no project id and no credentials:
+#
+#   DBT_GCP_PROJECT                 GCP project holding the robot_telemetry dataset
+#   GOOGLE_APPLICATION_CREDENTIALS  path to the service-account JSON, mounted
+#                                   from the gcp-sa-key secret at /secrets/gcp/key.json
+#
+# Both are set by the dbt-build step in workflow-template.yaml.
+
+robot_telemetry:
+  target: prod
+  outputs:
+    prod:
+      type: bigquery
+      method: service-account
+      project: "{{ env_var('DBT_GCP_PROJECT') }}"
+      keyfile: "{{ env_var('GOOGLE_APPLICATION_CREDENTIALS') }}"
+      dataset: robot_telemetry
+      location: US
+      threads: 4
+      priority: interactive
+      job_execution_timeout_seconds: 300
+      job_retries: 1
