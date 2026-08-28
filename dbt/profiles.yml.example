@@ -1,1 +1,22 @@
-# dbt profile template (Prompt 3)
+# Copy to ~/.dbt/profiles.yml and fill in the two placeholders.
+#
+#   cp dbt/profiles.yml.example ~/.dbt/profiles.yml
+#
+# Authentication is service-account keyfile only, matching ingest/load_bigquery.py.
+# The keyfile is the same JSON that GOOGLE_APPLICATION_CREDENTIALS points at.
+# Never commit the real profiles.yml or the keyfile.
+
+robot_telemetry:
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      method: service-account
+      project: your-gcp-project-id # GCP project holding the robot_telemetry dataset
+      keyfile: /path/to/service-account.json # absolute path to the service-account JSON
+      dataset: robot_telemetry
+      location: US
+      threads: 4
+      priority: interactive
+      job_execution_timeout_seconds: 300
+      job_retries: 1

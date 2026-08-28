@@ -1,1 +1,36 @@
-# dbt project config (Prompt 3)
+name: robot_telemetry
+version: 1.0.0
+config-version: 2
+
+profile: robot_telemetry
+
+model-paths: ["models"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+# Layer materialisations. Staging stays a view so it always reflects the raw
+# table without a rebuild; the two aggregate layers are tables because they are
+# read far more often than they are built.
+models:
+  robot_telemetry:
+    staging:
+      +materialized: view
+    intermediate:
+      +materialized: table
+    marts:
+      +materialized: table
+
+# Operating assumptions shared by the models. These mirror the simulator's
+# constants (simulator/generate_telemetry.py); change them in one place if the
+# fleet's hours or heartbeat cadence ever change.
+vars:
+  # All three sites (PIT-01, PIT-02, CLE-01) are US/Eastern. Daily grain is the
+  # local date, not the UTC date: a 10:00-22:00 local shift spans two UTC dates,
+  # so a UTC grain would cut every operating day in half.
+  operating_timezone: America/New_York
+  operating_open_hour: 10
+  operating_close_hour: 22
+  # One heartbeat every five minutes => 144 expected per full operating day.
+  heartbeat_interval_s: 300
+  # Trailing window for fct_fleet_health, in days, inclusive of the last day.
+  fleet_health_window_days: 7

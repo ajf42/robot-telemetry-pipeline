@@ -1,1 +1,110 @@
-# staging model tests + docs (Prompt 3)
+version: 2
+
+sources:
+  - name: robot_telemetry
+    description: >
+      Raw telemetry landed by ingest/load_bigquery.py. Partitioned by
+      DATE(event_ts) and clustered by robot_id.
+    database: "{{ target.project }}"
+    schema: robot_telemetry
+    tables:
+      - name: telemetry_raw
+        description: >
+          One row per telemetry event, flat, as emitted by the fleet simulator
+          and passed by ingest/validate.py. Append-only.
+
+models:
+  - name: stg_telemetry
+    description: >
+      Contract-shaped telemetry, deduplicated on event_id and stripped of rows
+      with no robot_id. The entry point for every downstream model.
+
+      The tests below assert that the ingest contract held. ingest/validate.py
+      already rejects out-of-range temp_c, future event_ts and unknown
+      event_types before load, so a failure here means bad rows reached
+      BigQuery by some other path -- not that this model needs a wider filter.
+    columns:
+      - name: event_id
+        description: uuid4, unique per event. The deduplication key.
+        tests:
+          - unique
+          - not_null
+
+      - name: robot_id
+        description: >
+          Unit identifier, "ROBOT-NNN" over the 15-robot fleet
+          (ROBOT-001..ROBOT-015). Rows with a null robot_id are filtered out
+          upstream of this column, so it is never null here.
+        tests:
+          - not_null
+
+      - name: site_id
+        description: Kitchen the robot is installed in. All three sites are US/Eastern.
+        tests:
+          - not_null
+          - accepted_values:
+              values: ["PIT-01", "PIT-02", "CLE-01"]
+
+      - name: event_type
+        description: >
+          What the robot reported. "diagnostic_ping" is the simulator's injected
+          unknown type and must never survive ingest.
+        tests:
+          - not_null
+          - accepted_values:
+              values:
+                - cook_cycle_start
+                - cook_cycle_end
+                - sensor_reading
+                - error
+                - heartbeat
+
+      - name: event_ts
+        description: When the event occurred, UTC. Never in the future.
+        tests:
+          - not_null
+
+      - name: temp_c
+        description: >
+          Cook temperature in Celsius, valid range 15.0-260.0. Populated on
+          sensor_reading and cook_cycle_end; null on every other event type.
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 15.0
+              max_value: 260.0
+              inclusive: true
+              config:
+                where: "temp_c is not null"
+
+      - name: cycle_id
+        description: >
+          uuid4 shared by a cook_cycle_start/cook_cycle_end pair, and carried by
+          sensor readings taken during that cycle. Null elsewhere.
+
+      - name: cycle_duration_s
+        description: >
+          Cook cycle length in seconds, valid range 30-1800. Populated on
+          cook_cycle_end only.
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 30
+              max_value: 1800
+              inclusive: true
+              config:
+                where: "cycle_duration_s is not null"
+
+      - name: error_code
+        description: Fault reported by the unit. Populated on error events only.
+        tests:
+          - accepted_values:
+              values:
+                - E01_TEMP_SENSOR
+                - E02_MOTOR_STALL
+                - E03_VISION_FAULT
+                - E04_COMMS_TIMEOUT
+                - E05_DOOR_JAM
+
+      - name: firmware_version
+        description: Semver build running on the unit when the event fired, e.g. "2.4.1".
+        tests:
+          - not_null

@@ -1,1 +1,89 @@
-# marts model tests + docs (Prompt 3)
+version: 2
+
+models:
+  - name: fct_fleet_health
+    description: >
+      Trailing 7-day health rollup, one row per robot, for answering "which
+      robots are struggling". Ranked worst-first by error rate.
+
+      The window ends on the most recent activity_date in int_robot_daily, not
+      on current_date, so a fixed historical load always yields a populated
+      table. Rebuild after every load to move the window forward.
+
+      Robots that reported nothing for the whole window are absent rather than
+      present with zeroes -- a silent unit is a gap here, so read days_observed
+      alongside avg_uptime_pct.
+    columns:
+      - name: robot_id
+        description: Unit identifier, "ROBOT-NNN". One row per robot.
+        tests:
+          - not_null
+          - unique
+
+      - name: site_id
+        description: Kitchen the robot is installed in.
+        tests:
+          - not_null
+
+      - name: window_start_date
+        description: First local date in the trailing window, inclusive.
+        tests:
+          - not_null
+
+      - name: window_end_date
+        description: >
+          Last local date in the trailing window, inclusive. The latest date
+          present in int_robot_daily.
+        tests:
+          - not_null
+
+      - name: days_observed
+        description: >
+          Days in the window on which this robot reported at least one event,
+          1 to {{ var('fleet_health_window_days') }}. Anything lower means the unit was silent for whole days, which
+          avg_uptime_pct cannot show on its own.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 1
+              max_value: "{{ var('fleet_health_window_days') }}"
+              inclusive: true
+
+      - name: total_cycles
+        description: Cook cycles completed across the window.
+        tests:
+          - not_null
+
+      - name: total_errors
+        description: Error events reported across the window.
+        tests:
+          - not_null
+
+      - name: error_rate
+        description: >
+          Errors per 100 completed cycles across the window, to two decimals.
+          The headline "struggling" measure: normalising by cycles keeps a busy
+          robot from looking worse than an idle one at equal fault counts. Null
+          when total_cycles is 0, since a rate per cycle is undefined with no
+          cycles.
+
+      - name: avg_uptime_pct
+        description: >
+          Unweighted mean of the robot's daily uptime_pct over the days it
+          reported. Days with no events are not averaged in, so a unit that was
+          dark for several days can still show high uptime -- pair this with
+          days_observed.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+              inclusive: true
+
+      - name: fleet_rank
+        description: >
+          Rank by error_rate descending, so 1 is the worst-performing robot and
+          the top of the table is the maintenance queue. Ties share a rank.
+          Robots with a null error_rate (no completed cycles) rank last.
+        tests:
+          - not_null

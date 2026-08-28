@@ -1,1 +1,82 @@
-# intermediate model tests + docs (Prompt 3)
+version: 2
+
+models:
+  - name: int_robot_daily
+    description: >
+      One row per robot per operating day, aggregating cycles, temperature,
+      errors and availability.
+
+      The date grain is the local date (America/New_York) rather than the UTC
+      date. Every site runs 10:00-22:00 local, a window that crosses midnight
+      UTC, so a UTC grain would split each operating day across two rows.
+
+      A robot that emits nothing at all on a given day produces no row here.
+      Absence is therefore not the same as zero, which matters when averaging
+      uptime downstream.
+    columns:
+      - name: robot_id
+        description: Unit identifier, "ROBOT-NNN".
+        tests:
+          - not_null
+
+      - name: activity_date
+        description: Local (America/New_York) calendar date the events fall on.
+        tests:
+          - not_null
+
+      - name: site_id
+        description: Kitchen the robot is installed in.
+        tests:
+          - not_null
+
+      - name: cycles_completed
+        description: >
+          Cook cycles that finished on this day, counted from cook_cycle_end
+          events. A cycle started before close but ending after it is counted on
+          the day it ended.
+        tests:
+          - not_null
+
+      - name: avg_cycle_duration_s
+        description: >
+          Mean length in seconds of the cycles completed on this day, to one
+          decimal. Null if no cycle completed.
+
+      - name: avg_temp_c
+        description: >
+          Mean of every temperature reading on this day, to two decimals, across
+          sensor_reading and cook_cycle_end events. Null if none were reported.
+
+      - name: error_count
+        description: Error events reported on this day.
+        tests:
+          - not_null
+
+      - name: errors_by_code
+        description: >
+          JSON object keyed by the five contract error codes, each holding this
+          day's count for that code, e.g.
+          {"E01_TEMP_SENSOR":0,"E02_MOTOR_STALL":3,...}. Every key is always
+          present, so consumers need not handle missing fields. The counts sum
+          to error_count.
+        tests:
+          - not_null
+
+      - name: heartbeat_count
+        description: Heartbeats received on this day.
+        tests:
+          - not_null
+
+      - name: uptime_pct
+        description: >
+          Heartbeats received as a percentage of the 144 expected across a
+          12-hour operating day at one every 300 seconds, to two decimals and
+          capped at 100. A partial first or last day of history reports
+          genuinely low uptime, because fewer beats arrived than a full day
+          expects.
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+              inclusive: true
