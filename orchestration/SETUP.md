@@ -1,8 +1,14 @@
 # Running the pipeline on a local k3d cluster
 
 Everything below is copy-pasteable, in order, from the repo root. Start from a
-machine with Docker running and `kubectl` on the path; steps 0–1 install the
-other two tools.
+machine with Docker running; step 0 installs the other tools.
+
+`kubectl` is assumed on the path from here down. Docker Desktop already ships
+one (`…/DockerDesktop/resources/bin/kubectl.exe` on Windows), so on a Docker
+Desktop machine there is nothing to do. Otherwise install it — `brew install
+kubectl`, `winget install Kubernetes.kubectl`, or the plain binary from
+<https://kubernetes.io/docs/tasks/tools/>. Note that k3d does **not** bring its
+own.
 
 Pinned versions, changed in one place each:
 
@@ -39,18 +45,29 @@ On Linux swap `argo-darwin-amd64` for `argo-linux-amd64`; on Apple Silicon use
 scoop install k3d argo
 ```
 
-Without Scoop, k3d ships a Windows binary on its releases page, and the Argo CLI
-asset is gzipped, which PowerShell can unpack in one line:
+Without Scoop, both are plain downloads and neither needs elevation. k3d ships a
+Windows binary directly:
 
 ```powershell
-Invoke-WebRequest https://github.com/argoproj/argo-workflows/releases/download/v3.6.5/argo-windows-amd64.gz -OutFile argo.gz
+Invoke-WebRequest -UseBasicParsing https://github.com/k3d-io/k3d/releases/download/v5.9.0/k3d-windows-amd64.exe -OutFile k3d.exe
+```
+
+The Argo CLI asset is gzipped, which PowerShell can unpack in one line. Note the
+Windows asset is named `argo-windows-amd64.exe.gz` — it carries an `.exe` before
+the `.gz`, unlike the macOS and Linux assets above:
+
+```powershell
+Invoke-WebRequest -UseBasicParsing https://github.com/argoproj/argo-workflows/releases/download/v3.6.5/argo-windows-amd64.exe.gz -OutFile argo.gz
 ```
 
 ```powershell
 $in=[IO.File]::OpenRead("$PWD\argo.gz"); $out=[IO.File]::Create("$PWD\argo.exe"); $gz=New-Object IO.Compression.GzipStream($in,[IO.Compression.CompressionMode]::Decompress); $gz.CopyTo($out); $gz.Dispose(); $out.Dispose(); $in.Dispose()
 ```
 
-Then move `argo.exe` somewhere on your `PATH`.
+Then move `k3d.exe` and `argo.exe` somewhere on your `PATH`. A user-owned
+directory such as `C:\Users\<you>\bin` works and needs no admin rights; add it
+with `[Environment]::SetEnvironmentVariable('Path', "$([Environment]::GetEnvironmentVariable('Path','User'));C:\Users\<you>\bin", 'User')`,
+which takes effect in newly opened terminals.
 
 Confirm both are live:
 
@@ -79,8 +96,15 @@ kubectl get nodes
 ```
 
 `k3d cluster create` also points your kubeconfig at the new cluster, so every
-`kubectl` below lands in the right place. The cluster ships with the
-`local-path` storage class, which is what backs the pipeline's shared volume.
+`kubectl` below lands in the right place — `kubectl config current-context`
+should read `k3d-telemetry`.
+
+`--agents 1` means one agent **in addition to** the server, so `kubectl get
+nodes` shows **two** Ready nodes, `k3d-telemetry-server-0` and
+`k3d-telemetry-agent-0`. That is expected. The cluster ships with the
+`local-path` storage class, which is what backs the pipeline's shared volume;
+it binds `WaitForFirstConsumer`, so a run's PVC attaches to whichever node the
+`generate` pod lands on and the remaining three steps are then pinned there too.
 
 ---
 
@@ -102,9 +126,13 @@ kubectl -n argo rollout status deploy/workflow-controller --timeout=180s
 kubectl -n argo rollout status deploy/argo-server --timeout=180s
 ```
 
-`quick-start-minimal` is the variant with **no** bundled MinIO and no artifact
-repository — this pipeline passes data on a volume instead, so there is nothing
-further to configure. To move to a newer Argo, change the version in both the
+`quick-start-minimal` is the variant with no SSO and no external database. It
+does still bundle a MinIO deployment, an `httpbin` deployment, and an
+`artifact-repositories` ConfigMap — you will see all three in `kubectl -n argo
+get pods`, and `httpbin` often sits at `0/1` without ever mattering. **This
+pipeline uses none of them**: it passes data between steps on a
+`volumeClaimTemplate`, so there is nothing further to configure and the bundled
+MinIO can be ignored. To move to a newer Argo, change the version in both the
 URL above and the table at the top; releases are listed at
 <https://github.com/argoproj/argo-workflows/releases>.
 
