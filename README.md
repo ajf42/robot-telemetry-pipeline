@@ -128,23 +128,13 @@ absent. `--replace` truncates and loads in one job, so re-running is safe.
 ### 4. Build the dbt models
 
 ```bash
-mkdir -p ~/.dbt
+cp dbt/profiles.yml.example dbt/profiles.yml
 ```
 
-```bash
-cp dbt/profiles.yml.example ~/.dbt/profiles.yml
-```
-
-Edit that file and fill in the two placeholders: your GCP project id and the
-absolute path to the same keyfile.
-
-On Windows, `~/.dbt` resolves to `C:\Users\<you>\.dbt`, and PowerShell has no
-`mkdir -p` — create the directory with this instead, then run the `cp` above as
-written:
-
-```powershell
-New-Item -ItemType Directory -Force -Path ~/.dbt
-```
+Edit that copy and fill in the two placeholders: your GCP project id and the
+absolute path to the same keyfile. The profile lives in the repo rather than in
+`~/.dbt` — `.gitignore` already excludes `dbt/profiles.yml`, so the credentials
+stay uncommitted while the profile stays next to the project it configures.
 
 ```bash
 cd dbt
@@ -155,7 +145,7 @@ dbt deps
 ```
 
 ```bash
-dbt build
+dbt build --profiles-dir .
 ```
 
 `dbt build` runs the three models in dependency order and every schema test in
