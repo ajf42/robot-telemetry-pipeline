@@ -1,6 +1,12 @@
-# Copy to ~/.dbt/profiles.yml and fill in the two placeholders.
+# Copy alongside this file as dbt/profiles.yml and fill in the two placeholders.
 #
-#   cp dbt/profiles.yml.example ~/.dbt/profiles.yml
+#   cp dbt/profiles.yml.example dbt/profiles.yml
+#
+# The copy lives in the repo, not in ~/.dbt: .gitignore already excludes
+# dbt/profiles.yml, so the real credentials stay uncommitted while the profile
+# stays next to the project it configures. Run dbt from dbt/ and point it here:
+#
+#   cd dbt && dbt deps && dbt build --profiles-dir .
 #
 # Authentication is service-account keyfile only, matching ingest/load_bigquery.py.
 # The keyfile is the same JSON that GOOGLE_APPLICATION_CREDENTIALS points at.
